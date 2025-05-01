@@ -14,7 +14,9 @@ const SignUpPage = () => {
     gender: "",
   });
 
-  const [signup, { loading, error }] = useMutation(SIGN_UP);
+  const [signup, { loading }] = useMutation(SIGN_UP, {
+    refetchQueries: ["GetAuthenticatedUser"],
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -25,10 +27,11 @@ const SignUpPage = () => {
         },
       });
     } catch (error) {
-      console.log("Error signing up: ", error);
+      console.error("Error:", error);
       toast.error(error.message);
     }
   };
+
   const handleChange = (e) => {
     const { name, value, type } = e.target;
 
@@ -106,7 +109,6 @@ const SignUpPage = () => {
                   disabled={loading}
                 >
                   {loading ? "Loading..." : "Sign Up"}
-                  Sign Up
                 </button>
               </div>
             </form>
