@@ -1,91 +1,130 @@
-import dotenv, { config } from "dotenv";
-import express from "express";
-import http from "http";
-import cors from "cors";
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import RadioButton from "../components/RadioButton";
+import InputField from "../components/InputField";
+import { useMutation } from "@apollo/client";
+import { SIGN_UP } from "../graphql/mutations/user.mutation";
+import toast from "react-hot-toast";
 
-import { ApolloServer } from "@apollo/server";
-import { expressMiddleware } from "@apollo/server/express4";
-import { ApolloServerPluginDrainHttpServer } from "@apollo/server/plugin/drainHttpServer";
-import { ApolloServerPluginLandingPageLocalDefault } from "@apollo/server/plugin/landingPage/default";
-
-import { buildContext } from "graphql-passport";
-
-import passport from "passport";
-import session from "express-session";
-import connectMongo from "connect-mongodb-session";
-
-import mergeResolvers from "./resolvers/index.js";
-import mergedTypeDefs from "./typeDefs/index.js";
-import { connectDB } from "./db/connectDB.js";
-import { configuserPassport } from "./password/password.config.js";
-dotenv.config();
-
-configuserPassport();
-
-async function bootstrap() {
-  // 1) Connect to Mongo
-  await connectDB();
-
-  // 2) Set up Express + middleware
-  const app = express();
-  app.use(cors());
-  app.use(express.json());
-
-  const httpServer = http.createServer(app);
-
-  const MongoDBStore = connectMongo(session);
-
-  const store = new MongoDBStore({
-    uri: process.env.MONGO_URI,
-    collection: "sessions",
+const SignUpPage = () => {
+  const [signUpData, setSignUpData] = useState({
+    name: "",
+    username: "",
+    password: "",
+    gender: "",
   });
 
-  store.on("error", (err) => {
-    console.log("MongoDB session store error", err);
+  const [signup, { loading }] = useMutation(SIGN_UP, {
+    refetchQueries: ["GetAuthenticatedUser"],
   });
 
-  app.use(
-    session({
-      secret: process.env.SESSION_SECRET,
-      resave: false,
-      saveUninitialized: false,
-      store: store,
-      cookie: {
-        maxAge: 1000 * 60 * 60 * 24 * 7,
-        httpOnly: true, // Prevents client-side JavaScript from accessing the cookie
-      },
-    })
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await signup({
+        variables: {
+          input: signUpData,
+        },
+      });
+    } catch (error) {
+      console.error("Error:", error);
+      toast.error(error.message);
+    }
+  };
+
+  const handleChange = (e) => {
+    const { name, value, type } = e.target;
+
+    if (type === "radio") {
+      setSignUpData((prevData) => ({
+        ...prevData,
+        gender: value,
+      }));
+    } else {
+      setSignUpData((prevData) => ({
+        ...prevData,
+        [name]: value,
+      }));
+    }
+  };
+
+  return (
+    <div className="h-screen flex justify-center items-center">
+      <div className="flex rounded-lg overflow-hidden z-50 bg-gray-300">
+        <div className="w-full bg-gray-100 min-w-80 sm:min-w-96 flex items-center justify-center">
+          <div className="max-w-md w-full p-6">
+            <h1 className="text-3xl font-semibold mb-6 text-black text-center">
+              Sign Up
+            </h1>
+            <h1 className="text-sm font-semibold mb-6 text-gray-500 text-center">
+              Join to keep track of your expenses
+            </h1>
+            <form className="space-y-4" onSubmit={handleSubmit}>
+              <InputField
+                label="Full Name"
+                id="name"
+                name="name"
+                value={signUpData.name}
+                onChange={handleChange}
+              />
+              <InputField
+                label="Username"
+                id="username"
+                name="username"
+                value={signUpData.username}
+                onChange={handleChange}
+              />
+
+              <InputField
+                label="Password"
+                id="password"
+                name="password"
+                type="password"
+                value={signUpData.password}
+                onChange={handleChange}
+              />
+              <div className="flex gap-10">
+                <RadioButton
+                  id="male"
+                  label="Male"
+                  name="gender"
+                  value="male"
+                  onChange={handleChange}
+                  checked={signUpData.gender === "male"}
+                />
+                <RadioButton
+                  id="female"
+                  label="Female"
+                  name="gender"
+                  value="female"
+                  onChange={handleChange}
+                  checked={signUpData.gender === "female"}
+                />
+              </div>
+
+              <div>
+                <button
+                  type="submit"
+                  className="w-full bg-black text-white p-2 rounded-md hover:bg-gray-800 focus:outline-none focus:bg-black  focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={loading}
+                >
+                  {loading ? "Loading..." : "Sign Up"}
+                </button>
+              </div>
+            </form>
+            <div className="mt-4 text-sm text-gray-600 text-center">
+              <p>
+                Already have an account?{" "}
+                <Link to="/login" className="text-black hover:underline">
+                  Login here
+                </Link>
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
+};
 
-  app.use(passport.initialize());
-  app.use(passport.session());
-
-  // 3) Create & start ApolloServer
-  const server = new ApolloServer({
-    typeDefs: mergedTypeDefs,
-    resolvers: mergeResolvers,
-    plugins: [
-      ApolloServerPluginDrainHttpServer({ httpServer }),
-      ApolloServerPluginLandingPageLocalDefault({ embed: true }),
-    ],
-  });
-  await server.start();
-
-  // 4) Mount GraphQL (and Sandbox) at root
-  app.use(
-    "/",
-    cors({ origin: "http://localhost:3000", credentials: true }),
-    expressMiddleware(server, {
-      context: async ({ req, res }) => buildContext({ req, res }),
-    })
-  );
-
-  // 5) Listen
-  await new Promise((res) => httpServer.listen({ port: 4000 }, res));
-  console.log("🚀 Server ready at http://localhost:4000/");
-}
-
-bootstrap().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+export default SignUpPage;
