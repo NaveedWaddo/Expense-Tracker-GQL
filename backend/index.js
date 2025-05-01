@@ -1,130 +1,97 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import RadioButton from "../components/RadioButton";
-import InputField from "../components/InputField";
-import { useMutation } from "@apollo/client";
-import { SIGN_UP } from "../graphql/mutations/user.mutation";
-import toast from "react-hot-toast";
+import express from "express";
+import http from "http";
+import cors from "cors";
+import dotenv from "dotenv";
+import path from "path";
+import passport from "passport";
+import session from "express-session";
+import connectMongo from "connect-mongodb-session";
 
-const SignUpPage = () => {
-  const [signUpData, setSignUpData] = useState({
-    name: "",
-    username: "",
-    password: "",
-    gender: "",
-  });
+import { ApolloServer } from "@apollo/server";
+import { expressMiddleware } from "@apollo/server/express4";
+import { ApolloServerPluginDrainHttpServer } from "@apollo/server/plugin/drainHttpServer";
 
-  const [signup, { loading }] = useMutation(SIGN_UP, {
-    refetchQueries: ["GetAuthenticatedUser"],
-  });
+import { buildContext } from "graphql-passport";
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      await signup({
-        variables: {
-          input: signUpData,
-        },
-      });
-    } catch (error) {
-      console.error("Error:", error);
-      toast.error(error.message);
-    }
-  };
+import mergedResolvers from "./resolvers/index.js";
+import mergedTypeDefs from "./typeDefs/index.js";
 
-  const handleChange = (e) => {
-    const { name, value, type } = e.target;
+import { connectDB } from "./db/connectDB.js";
+import { configurePassport } from "./passport/passport.config.js";
 
-    if (type === "radio") {
-      setSignUpData((prevData) => ({
-        ...prevData,
-        gender: value,
-      }));
-    } else {
-      setSignUpData((prevData) => ({
-        ...prevData,
-        [name]: value,
-      }));
-    }
-  };
+import job from "./cron.js";
 
-  return (
-    <div className="h-screen flex justify-center items-center">
-      <div className="flex rounded-lg overflow-hidden z-50 bg-gray-300">
-        <div className="w-full bg-gray-100 min-w-80 sm:min-w-96 flex items-center justify-center">
-          <div className="max-w-md w-full p-6">
-            <h1 className="text-3xl font-semibold mb-6 text-black text-center">
-              Sign Up
-            </h1>
-            <h1 className="text-sm font-semibold mb-6 text-gray-500 text-center">
-              Join to keep track of your expenses
-            </h1>
-            <form className="space-y-4" onSubmit={handleSubmit}>
-              <InputField
-                label="Full Name"
-                id="name"
-                name="name"
-                value={signUpData.name}
-                onChange={handleChange}
-              />
-              <InputField
-                label="Username"
-                id="username"
-                name="username"
-                value={signUpData.username}
-                onChange={handleChange}
-              />
+dotenv.config();
+configurePassport();
 
-              <InputField
-                label="Password"
-                id="password"
-                name="password"
-                type="password"
-                value={signUpData.password}
-                onChange={handleChange}
-              />
-              <div className="flex gap-10">
-                <RadioButton
-                  id="male"
-                  label="Male"
-                  name="gender"
-                  value="male"
-                  onChange={handleChange}
-                  checked={signUpData.gender === "male"}
-                />
-                <RadioButton
-                  id="female"
-                  label="Female"
-                  name="gender"
-                  value="female"
-                  onChange={handleChange}
-                  checked={signUpData.gender === "female"}
-                />
-              </div>
+job.start();
 
-              <div>
-                <button
-                  type="submit"
-                  className="w-full bg-black text-white p-2 rounded-md hover:bg-gray-800 focus:outline-none focus:bg-black  focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={loading}
-                >
-                  {loading ? "Loading..." : "Sign Up"}
-                </button>
-              </div>
-            </form>
-            <div className="mt-4 text-sm text-gray-600 text-center">
-              <p>
-                Already have an account?{" "}
-                <Link to="/login" className="text-black hover:underline">
-                  Login here
-                </Link>
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+const __dirname = path.resolve();
+const app = express();
 
-export default SignUpPage;
+const httpServer = http.createServer(app);
+
+const MongoDBStore = connectMongo(session);
+
+const store = new MongoDBStore({
+  uri: process.env.MONGO_URI,
+  collection: "sessions",
+});
+
+store.on("error", (err) => console.log(err));
+
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET,
+    resave: false, // this option specifies whether to save the session to the store on every request
+    saveUninitialized: false, // option specifies whether to save uninitialized sessions
+    cookie: {
+      maxAge: 1000 * 60 * 60 * 24 * 7,
+      httpOnly: true, // this option prevents the Cross-Site Scripting (XSS) attacks
+    },
+    store: store,
+  })
+);
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+const server = new ApolloServer({
+  typeDefs: mergedTypeDefs,
+  resolvers: mergedResolvers,
+  plugins: [ApolloServerPluginDrainHttpServer({ httpServer })],
+});
+
+// Ensure we wait for our server to start
+await server.start();
+
+// Set up our Express middleware to handle CORS, body parsing,
+// and our expressMiddleware function.
+app.use(
+  "/graphql",
+  cors({
+    origin: "http://localhost:3000",
+    credentials: true,
+  }),
+  express.json(),
+  // expressMiddleware accepts the same arguments:
+  // an Apollo Server instance and optional configuration options
+  expressMiddleware(server, {
+    context: async ({ req, res }) => buildContext({ req, res }),
+  })
+);
+
+// npm run build will build your frontend app, and it will the optimized version of your app
+app.use(express.static(path.join(__dirname, "frontend/dist")));
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "frontend/dist", "index.html"));
+});
+
+// Modified server startup
+const port = process.env.PORT || 4000;
+
+await new Promise((resolve) => httpServer.listen({ port: 4000 }, resolve));
+await connectDB();
+
+console.log(`🚀 Server ready at http://localhost:${port}/graphql`);
