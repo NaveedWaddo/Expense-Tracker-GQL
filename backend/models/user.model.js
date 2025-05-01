@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import passport from "passport";
 
 const userSchema = new mongoose.Schema(
   {
@@ -12,7 +11,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    passport: {
+    password: {
       type: String,
       required: true,
     },
@@ -25,9 +24,7 @@ const userSchema = new mongoose.Schema(
       enum: ["male", "female"],
     },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
 const User = mongoose.model("User", userSchema);
